@@ -1,1 +1,3 @@
-#include "lib/src/include/liburing.h"
+#define IOURINGINLINE
+
+#include "liburing/src/include/liburing.h"

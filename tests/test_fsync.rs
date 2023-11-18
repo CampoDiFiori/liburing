@@ -66,11 +66,16 @@ fn test_io_uring_fsync() {
                     (*cqe).user_data
                 );
             }
+            let err = std::ffi::CStr::from_ptr(libc::strerror(-(*cqe).res))
+                .to_str()
+                .unwrap();
             if (*cqe).res != 0 {
                 panic!(
-                    "(*cqe).res = {}, (*cqe).user = {}",
+                    "(*cqe).res = {}, (*cqe).user = {}, err = {}, fd = {}",
                     (*cqe).res,
-                    (*cqe).user_data
+                    (*cqe).user_data,
+                    err,
+                    file.as_raw_fd()
                 );
             }
             io_uring_cqe_seen(&mut ring, cqe);

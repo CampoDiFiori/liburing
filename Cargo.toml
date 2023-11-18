@@ -10,7 +10,7 @@ repository = "https://github.com/sitano/liburing"
 version = "0.0.2"
 
 [build-dependencies]
-bindgen = "0.51.1"
+bindgen = "0.69.1"
 
 [dependencies]
 libc = "0.2.62"

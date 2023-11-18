@@ -1,7 +1,4 @@
-extern crate bindgen;
-
 use std::env;
-use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
@@ -9,37 +6,39 @@ fn main() {
 
     Command::new("cp")
         .arg("-r")
-        .arg("lib")
+        .arg("liburing")
         .arg(out_dir.clone())
         .status()
         .expect("copy liburing to out_dir");
     Command::new("make")
-        .arg("liburing.a")
-        .current_dir(format!("{}/lib/src", out_dir.clone()))
-        .env("CFLAGS", "-fPIC")
+        .arg("j4")
+        .current_dir(format!("{}/liburing", out_dir.clone()))
         .status()
         .expect("failed to build liburing.a");
 
-    // Tell cargo to tell rustc to link the system liburing
-    // shared library.
-    println!("cargo:rustc-link-lib=static=uring");
     println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rustc-link-search=native={}/lib/src", out_dir.clone());
+    println!("cargo:rustc-link-lib=static=uring-ffi");
+    println!(
+        "cargo:rustc-link-search=native={}/liburing/src",
+        out_dir.clone()
+    );
 
     // Generate bindings
     let bindings = bindgen::Builder::default()
-        .whitelist_function("__io_uring.*")
-        .whitelist_function("io_uring.*")
-        .whitelist_var("IORING.*")
-        .whitelist_var("IOSQE.*")
-        .whitelist_type("io_uring.*")
+        // .allowlist_function("__io_uring.*")
+        // .allowlist_function("io_uring.*")
+        // .allowlist_var("IORING.*")
+        // .allowlist_var("IOSQE.*")
+        // .allowlist_item("IORING.*")
+        // .allowlist_item("IOSQE.*")
+        // .allowlist_type("io_uring.*")
         .header("wrapper.h")
         .generate()
         .expect("Unable to generate bindings");
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(out_dir);
+    // let out_path = PathBuf::from(out_dir);
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
+        .write_to_file("src/bindings.rs")
         .expect("Couldn't write bindings!");
 }

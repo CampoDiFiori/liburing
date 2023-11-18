@@ -3,7 +3,6 @@ use std::io::Error;
 use std::mem;
 use std::os::unix::io::AsRawFd;
 
-use libc::off_t;
 use liburing::*;
 
 const QUEUE_DEPTH: u32 = 4;
@@ -22,8 +21,7 @@ fn test_io_uring_read_file() {
 
     let file = File::open("/proc/self/exe").unwrap();
 
-    let mut iovecs: Vec<libc::iovec> =
-        vec![unsafe { mem::zeroed() }; QUEUE_DEPTH as usize];
+    let mut iovecs: Vec<liburing::iovec> = vec![unsafe { mem::zeroed() }; QUEUE_DEPTH as usize];
     for iov in iovecs.iter_mut() {
         let buf = unsafe {
             let mut s = mem::MaybeUninit::<*mut libc::c_void>::uninit();
@@ -46,9 +44,9 @@ fn test_io_uring_read_file() {
             io_uring_prep_readv(
                 sqe,
                 file.as_raw_fd(),
-                &mut iovecs[i],
+                &iovecs[i] as *const _,
                 1,
-                offset as off_t,
+                offset as u64,
             )
         };
         offset += READ_SIZE;
