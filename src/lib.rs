@@ -2,9 +2,15 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use libc::c_void;
+use std::{collections::HashMap, os::fd::AsRawFd};
+
 // include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 pub mod bindings;
+pub mod provided_buffers;
+
 pub use bindings::*;
+pub use provided_buffers::*;
 
 /// use fixed fileset
 pub const IOSQE_FIXED_FILE: u32 = 1 << IOSQE_FIXED_FILE_BIT;
@@ -20,6 +26,117 @@ pub const IOSQE_ASYNC: u32 = 1 << IOSQE_ASYNC_BIT;
 pub const IOSQE_BUFFER_SELECT: u32 = 1 << IOSQE_BUFFER_SELECT_BIT;
 /// don't post CQE if request succeeded
 pub const IOSQE_CQE_SKIP_SUCCESS: u32 = 1 << IOSQE_CQE_SKIP_SUCCESS_BIT;
+
+pub struct IOUring {
+    ring: io_uring,
+    buffer_groups: HashMap<BgId, (*mut io_uring_buf_ring, *mut u8, REntrySize, u32)>,
+}
+
+impl IOUring {
+    pub fn new(size: u32) -> std::io::Result<Self> {
+        let ring = unsafe {
+            let mut s = std::mem::MaybeUninit::<io_uring>::uninit();
+            let ret = io_uring_queue_init(size, s.as_mut_ptr(), 0);
+            if ret < 0 {
+                return Err(std::io::Error::from_raw_os_error(ret));
+            }
+            s.assume_init()
+        };
+
+        Ok(Self {
+            ring,
+            buffer_groups: HashMap::new(),
+        })
+    }
+
+    pub fn get_sqe(&mut self) -> Option<IOUringSqe> {
+        unsafe {
+            io_uring_get_sqe(&mut self.ring)
+                .as_mut()
+                .map(|sqe| IOUringSqe { sqe })
+        }
+    }
+
+    pub fn submit(&mut self) -> std::io::Result<()> {
+        let ret = unsafe { io_uring_submit(&mut self.ring as *mut _) };
+        if ret < 0 {
+            return Err(std::io::Error::from_raw_os_error(ret));
+        }
+
+        Ok(())
+    }
+
+    pub fn prep_read(&mut self, file: &std::fs::File, offset: u64, bgid: BgId) {
+        let sqe = self
+            .get_sqe()
+            .expect("get sqe")
+            .prep_read(file, std::ptr::null_mut(), 0, offset)
+            .set_user_data(bgid as _);
+
+        unsafe {
+            io_uring_sqe_set_flags(sqe.sqe, IOSQE_BUFFER_SELECT);
+            sqe.sqe.__bindgen_anon_4.buf_group = bgid;
+        }
+    }
+
+    pub fn wait_cqe(&mut self) -> std::io::Result<IOUringCqe> {
+        let mut cqe: *mut io_uring_cqe = unsafe { std::mem::zeroed() };
+        let ret = unsafe { io_uring_wait_cqe(&mut self.ring, &mut cqe) };
+        if ret < 0 {
+            return Err(std::io::Error::from_raw_os_error(ret));
+        }
+        let cqe = unsafe {
+            cqe.as_mut()
+                .expect("BUG: cqe is null event though its initialization succeeded")
+        };
+
+        if cqe.res < 0 {
+            return Err(std::io::Error::from_raw_os_error(cqe.res));
+        }
+
+        Ok(IOUringCqe {
+            cqe,
+            ring: &mut self.ring,
+        })
+    }
+}
+
+pub struct IOUringSqe<'a> {
+    sqe: &'a mut io_uring_sqe,
+}
+
+impl<'a> IOUringSqe<'a> {
+    pub fn prep_read(self, file: &std::fs::File, buf: *mut u8, cap: usize, offset: u64) -> Self {
+        unsafe {
+            io_uring_prep_read(
+                self.sqe as *mut _,
+                file.as_raw_fd(),
+                buf as *mut c_void,
+                cap as u32,
+                offset,
+            )
+        }
+        self
+    }
+
+    pub fn set_user_data(self, user_data: u64) -> Self {
+        unsafe { io_uring_sqe_set_data64(self.sqe as *mut _, user_data) };
+        self
+    }
+}
+
+pub struct IOUringCqe<'a> {
+    ring: *mut io_uring,
+    pub cqe: &'a mut io_uring_cqe,
+}
+
+impl<'a> Drop for IOUringCqe<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            io_uring_cqe_seen(self.ring, self.cqe);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
