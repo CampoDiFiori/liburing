@@ -7,9 +7,11 @@ use std::{collections::HashMap, os::fd::AsRawFd};
 
 // include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 pub mod bindings;
+pub mod op;
 pub mod provided_buffers;
 
 pub use bindings::*;
+pub use op::*;
 pub use provided_buffers::*;
 
 /// use fixed fileset
@@ -79,6 +81,31 @@ impl IOUring {
         }
     }
 
+    pub fn prep_multishot_accept(&mut self, sockfd: i32) {
+        let sqe = self.get_sqe().expect("get multi-accept sqe");
+
+        unsafe {
+            io_uring_prep_multishot_accept(
+                sqe.sqe,
+                sockfd,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+            );
+        }
+    }
+
+    pub fn prep_multishot_receive(&mut self, sockfd: i32, bgid: BgId) {
+        let sqe = self.get_sqe().expect("get multi-recv sqe");
+
+        unsafe {
+            io_uring_prep_recv_multishot(sqe.sqe, sockfd, std::ptr::null_mut(), 0, 0);
+            io_uring_sqe_set_data64(sqe.sqe, IOUringOp::Recv { sockfd, bgid }.into_u64());
+            io_uring_sqe_set_flags(sqe.sqe, IOSQE_BUFFER_SELECT);
+            sqe.sqe.__bindgen_anon_4.buf_group = bgid;
+        }
+    }
+
     pub fn wait_cqe(&mut self) -> std::io::Result<IOUringCqe> {
         let mut cqe: *mut io_uring_cqe = unsafe { std::mem::zeroed() };
         let ret = unsafe { io_uring_wait_cqe(&mut self.ring, &mut cqe) };
@@ -91,12 +118,17 @@ impl IOUring {
         };
 
         if cqe.res < 0 {
-            return Err(std::io::Error::from_raw_os_error(cqe.res));
+            return Err(std::io::Error::from_raw_os_error(-cqe.res));
+        }
+
+        unsafe {
+            io_uring_cqe_seen(&mut self.ring, cqe);
         }
 
         Ok(IOUringCqe {
-            cqe,
-            ring: &mut self.ring,
+            op: IOUringOp::from_u64(cqe.user_data),
+            res: cqe.res,
+            flags: cqe.flags,
         })
     }
 }
@@ -125,17 +157,10 @@ impl<'a> IOUringSqe<'a> {
     }
 }
 
-pub struct IOUringCqe<'a> {
-    ring: *mut io_uring,
-    pub cqe: &'a mut io_uring_cqe,
-}
-
-impl<'a> Drop for IOUringCqe<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            io_uring_cqe_seen(self.ring, self.cqe);
-        }
-    }
+pub struct IOUringCqe {
+    pub op: IOUringOp,
+    pub res: i32,
+    pub flags: u32,
 }
 
 #[cfg(test)]

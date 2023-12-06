@@ -60,27 +60,35 @@ impl IOUring {
         Ok(self)
     }
 
-    pub fn wait_read(&mut self) -> std::io::Result<ProvidedBuffer> {
-        let cqe = self.wait_cqe()?;
-        let bgid = cqe.cqe.user_data;
-        let len = cqe.cqe.res as usize;
-        let buf_idx = cqe.cqe.flags >> IORING_CQE_BUFFER_SHIFT;
-        drop(cqe);
-
+    pub fn provided_buffer(&self, bgid: BgId, buf_idx: u32, len: usize) -> ProvidedBuffer {
         let (br, bufs, rentry_size, rentries) = self.buffer_groups[&(bgid as BgId)];
 
-        unsafe {
-            let ptr = bufs.offset((buf_idx * rentry_size) as _);
-            Ok(ProvidedBuffer::new(
-                ptr,
-                len,
-                br,
-                rentry_size,
-                rentries,
-                buf_idx,
-            ))
-        }
+        let ptr = unsafe { bufs.offset((buf_idx * rentry_size) as _) };
+
+        ProvidedBuffer::new(ptr, len, br, rentry_size, rentries, buf_idx)
     }
+
+    // pub fn wait_read(&mut self) -> std::io::Result<ProvidedBuffer> {
+    //     let cqe = self.wait_cqe()?;
+    //     let bgid = cqe.cqe.user_data;
+    //     let len = cqe.cqe.res as usize;
+    //     let buf_idx = cqe.cqe.flags >> IORING_CQE_BUFFER_SHIFT;
+    //     drop(cqe);
+
+    //     let (br, bufs, rentry_size, rentries) = self.buffer_groups[&(bgid as BgId)];
+
+    //     unsafe {
+    //         let ptr = bufs.offset((buf_idx * rentry_size) as _);
+    //         Ok(ProvidedBuffer::new(
+    //             ptr,
+    //             len,
+    //             br,
+    //             rentry_size,
+    //             rentries,
+    //             buf_idx,
+    //         ))
+    //     }
+    // }
 }
 
 pub struct ProvidedBuffer {
@@ -135,7 +143,7 @@ impl Drop for ProvidedBuffer {
                 io_uring_buf_ring_mask(self.rentries),
                 self.idx as _,
             );
-            io_uring_buf_ring_advance(self.br, self.rentries as _);
+            io_uring_buf_ring_advance(self.br, 1);
         }
     }
 }
